@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(streamlit run *)",
+      "Bash(curl *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(Get-Content -Path \"C:\\\\Users\\\\Usuario\\\\OneDrive\\\\Desktop\\\\swapurmusic\\\\swapurmusicpv-main\\\\main.py\" -Raw)",
+      "Bash(Select-Object -First 1)",
+      "WebFetch(domain:skillsmp.com)",
+      "Bash(unzip *)",
+      "Bash(uvx library-skills *)",
+      "Bash(library-skills *)",
+      "Bash(uv *)",
+      "Bash(pip install *)",
+      "Bash(pkill -f \"streamlit run main.py\")",
+      "Bash(pkill -f streamlit)",
+      "Bash(pkill -f \"streamlit\")",
+      "Bash(pkill -f \"python\")",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}
