@@ -113,6 +113,32 @@ class SpotifyService:
         else:
             return self.public_search_track(title, artist)
 
+    @staticmethod
+    def extract_id(url: str) -> tuple:
+        """Extract track_id and media_type from Spotify URL.
+        Handles URLs like:
+        - https://open.spotify.com/track/xxx
+        - https://open.spotify.com/intl-es/track/xxx
+        - https://open.spotify.com/playlist/xxx
+        - https://spotify.com/track/xxx
+        """
+        # Match Spotify track URLs (handles open.spotify.com, subdirectories like /intl-es/, /en/, etc.)
+        track_match = re.search(r'(?:open\.)?spotify\.com/.+?/track/([a-zA-Z0-9]+)', url)
+        if track_match:
+            return ("track", track_match.group(1))
+
+        # Match Spotify playlist URLs (handles open.spotify.com and subdirectories)
+        playlist_match = re.search(r'(?:open\.)?spotify\.com/.+?/playlist/([a-zA-Z0-9]+)', url)
+        if playlist_match:
+            return ("playlist", playlist_match.group(1))
+
+        # Match Spotify album URLs (handles subdirectories)
+        album_match = re.search(r'(?:open\.)?spotify\.com/.+?/album/([a-zA-Z0-9]+)', url)
+        if album_match:
+            return ("album", album_match.group(1))
+
+        return (None, None)
+
     def get_track_details(self, track_id: str) -> dict:
         """Get detailed metadata for a Spotify track using fallback methods."""
         if self.sp:
