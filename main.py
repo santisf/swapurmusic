@@ -3,6 +3,7 @@ import pandas as pd
 import urllib.parse
 import os
 import requests
+import re
 from dotenv import load_dotenv
 
 # Import our custom services and matcher
@@ -26,8 +27,34 @@ def detect_language(text):
     except Exception:
         return "en"
 
+def extract_spotify_id(url: str) -> tuple:
+    """Extracts media_type and ID from ANY valid Spotify URL.
+    Handles tracks, playlists, albums and cleans query strings / fragments.
+    """
+    # Clean the URL first
+    clean_url = url.split('?')[0].split('#')[0]
 
-# Load environment variables
+    # Match patterns (allow hyphens in IDs)
+    # Spotify track URLs (handles open.spotify.com and optional subdirectories)
+    m = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?track/([a-zA-Z0-9-]+)', clean_url)
+    if m:
+        return ("track", m.group(1))
+
+    # Spotify playlist URLs
+    m = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?playlist/([a-zA-Z0-9-]+)', clean_url)
+    if m:
+        return ("playlist", m.group(1))
+
+    # Spotify album URLs
+    m = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?album/([a-zA-Z0-9-]+)', clean_url)
+    if m:
+        return ("album", m.group(1))
+
+    return (None, None)
+
+
+# Load environment variables FIRST - before any service instantiation
+from dotenv import load_dotenv
 load_dotenv()
 
 # Set page config
@@ -218,10 +245,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Instantiate background services
-spotify_service = SpotifyService()
-youtube_service = YouTubeService()
-deezer_service = DeezerService()
-matcher = Matcher()
+# FORCE REIMPORT every time to avoid stale bytecode cache issues
+import importlib
+import services.spotify_service as ss
+import services.youtube_service as ys
+import services.deezer_service as ds
+import utils.matcher as m
+importlib.reload(ss)
+importlib.reload(ys)
+importlib.reload(ds)
+importlib.reload(m)
+
+# Create fresh instances
+spotify_service = ss.SpotifyService()
+youtube_service = ys.YouTubeService()
+deezer_service = ds.DeezerService()
+matcher = m.Matcher()
+
+# IMMEDIATE console debug - SUPERPOWERS
+import sys
+print(f"[SUPERPOWERS] Spotify configured: {spotify_service.is_configured()}", file=sys.stderr)
+if spotify_service.is_configured():
+    print(f"[SUPERPOWERS] Spotify client ready: {spotify_service.sp is not None}", file=sys.stderr)
 
 def generate_openrouter_response(prompt: str) -> str:
     """
@@ -545,28 +590,52 @@ if convert_btn:
         detected_platform = None
         source_id = None
         media_type = None  # "track" or "playlist"
-        
+
         # Determine source platform logic
-        if "Detectar Automáticamente" in source_platform:
+        if "Detectar Automáticamente" in source_platform or "spotify.com" in input_url:
             if "spotify.com" in input_url:
                 detected_platform = "Spotify"
-                media_type, source_id = spotify_service.extract_id(input_url)
+                try:
+                    media_type, source_id = extract_spotify_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de Spotify: {e}")
+                    media_type, source_id = None, None
             elif "youtube.com" in input_url or "youtu.be" in input_url or "music.youtube.com" in input_url:
                 detected_platform = "YouTube Music"
-                media_type, source_id = youtube_service.extract_id(input_url)
+                try:
+                    media_type, source_id = youtube_service.extract_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de YouTube: {e}")
+                    media_type, source_id = None, None
             elif "deezer.com" in input_url or "deezer.page.link" in input_url or "link.deezer.com" in input_url:
                 detected_platform = "Deezer"
-                media_type, source_id = deezer_service.extract_id(input_url)
+                try:
+                    media_type, source_id = deezer_service.extract_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de Deezer: {e}")
+                    media_type, source_id = None, None
             else:
                 st.error("No se pudo detectar la plataforma de origen automáticamente. Por favor selecciónala de forma manual.")
         else:
             detected_platform = source_platform
             if detected_platform == "Spotify":
-                media_type, source_id = spotify_service.extract_id(input_url)
+                try:
+                    media_type, source_id = extract_spotify_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de Spotify: {e}")
+                    media_type, source_id = None, None
             elif detected_platform == "YouTube Music":
-                media_type, source_id = youtube_service.extract_id(input_url)
+                try:
+                    media_type, source_id = youtube_service.extract_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de YouTube: {e}")
+                    media_type, source_id = None, None
             elif detected_platform == "Deezer":
-                media_type, source_id = deezer_service.extract_id(input_url)
+                try:
+                    media_type, source_id = deezer_service.extract_id(input_url)
+                except Exception as e:
+                    st.error(f"Error extrayendo ID de Deezer: {e}")
+                    media_type, source_id = None, None
 
         if not source_id or not media_type:
             st.error("Formato de URL no reconocido. Asegúrate de copiar un enlace de canción (track) or lista de reproducción (playlist) válido.")
@@ -584,6 +653,17 @@ if convert_btn:
                     else:  # Playlist
                         if detected_platform == "Spotify":
                             tracks_to_match = spotify_service.get_playlist_tracks(source_id)
+                            if not tracks_to_match:
+                                st.warning(
+                                    "⚠️ **No se pudo acceder a los tracks de la playlist de Spotify.**\n\n"
+                                    "**Motivo:** La API de Spotify requiere autenticación de usuario (OAuth) "
+                                    "para leer tracks de playlists. Las credenciales de la aplicación (Client Credentials) "
+                                    "no tienen permiso para esto.\n\n"
+                                    "**Soluciones:**\n"
+                                    "1. Usa un enlace de **track individual** (canción) en lugar de playlist.\n"
+                                    "2. Para playlists, usa **YouTube Music** o **Deezer** como origen.\n"
+                                    "3. En el futuro: implementar login con Spotify (OAuth)."
+                                )
                         elif detected_platform == "YouTube Music":
                             tracks_to_match = youtube_service.get_playlist_tracks(source_id)
                         elif detected_platform == "Deezer":
@@ -627,7 +707,57 @@ if convert_btn:
                         # Get Spotify target
                         if detected_platform != "Spotify":
                             candidates = spotify_service.search_track(title, artist)
-                            best_cand, score, _ = matcher.find_best_match(title, artist, candidates)
+                            st.write(f'DEBUG: Spotify candidates for {title}: {len(candidates)}')
+                            st.write(f'DEBUG: First candidate: {candidates[0] if candidates else "None"}')
+                            best_cand, score, status = matcher.find_best_match(title, artist, candidates)
+                            st.write(f'DEBUG: Spotify best_cand: {best_cand}, score: {score}, status: {status}')
+
+                            # Improved fallback: prefer exact artist match AND non-TV/short versions
+                            def is_short_version(title):
+                                """Check if title indicates a short/TV version"""
+                                short_keywords = ['tv size', 'tv-size', 'tv size', 'short version', 'short ver', 'edit', 'radio edit', 'short']
+                                title_lower = title.lower()
+                                return any(kw in title_lower for kw in short_keywords)
+
+                            # First, try to find exact artist match that is NOT a short version
+                            artist_lower = artist.strip().lower()
+                            best_exact_match = None
+                            for cand in candidates:
+                                cand_artist = cand.get('artist', '').strip().lower()
+                                if cand_artist == artist_lower:
+                                    if not is_short_version(cand.get('title', '')):
+                                        best_exact_match = cand
+                                        break
+                                    elif best_exact_match is None:
+                                        # Keep first exact match as backup
+                                        best_exact_match = cand
+
+                            # Decide which candidate to use
+                            use_fallback = False
+                            if not best_cand or score < 0.4:
+                                use_fallback = True
+                            elif is_short_version(best_cand.get('title', '')) and best_exact_match:
+                                # Prefer non-short version if available
+                                use_fallback = True
+                                st.write(f'DEBUG: Best candidate is short version, preferring exact match')
+
+                            if use_fallback and best_exact_match:
+                                best_cand = best_exact_match
+                                score = 0.8
+                                st.write(f'DEBUG: Using exact artist match (non-short): {best_cand}')
+                            elif use_fallback and candidates:
+                                # Find first non-short version as fallback
+                                for cand in candidates:
+                                    if not is_short_version(cand.get('title', '')):
+                                        best_cand = cand
+                                        score = 0.5
+                                        st.write(f'DEBUG: Using first non-short candidate: {best_cand}')
+                                        break
+                                else:
+                                    best_cand = candidates[0]
+                                    score = 0.5
+                                    st.write(f'DEBUG: Using first candidate as fallback: {best_cand}')
+
                             if best_cand:
                                 sp_link = best_cand["url"]
                             matched_scores.append(score)

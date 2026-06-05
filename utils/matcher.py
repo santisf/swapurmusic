@@ -248,13 +248,22 @@ Return only a JSON object matching this schema:
         if title_fuzzy < 0.4:
             penalty = 0.2  # Hard penalty for mismatched titles
 
+        # ---- 5️⃣₊ Penalty for TV/short versions ----
+        # Prefer full versions over TV edits, short versions, etc.
+        tv_penalty = 0.0
+        tv_keywords = ['tv size', 'tv-size', 'short version', 'short ver', 'edit', 'radio edit', 'short']
+        candidate_title_lower = candidate.get('title', '').lower()
+        if any(kw in candidate_title_lower for kw in tv_keywords):
+            tv_penalty = 0.15  # Moderate penalty for TV/short versions
+
         # ---- 6️⃣ Final weighted hybrid score ----
         final_score = (
             0.4 * ai_similarity_val +
             0.35 * fuzzy_score_val +
             0.15 * pop_score +
             bonus -
-            penalty
+            penalty -
+            tv_penalty
         )
 
         # Clamp to [0, 1]
@@ -286,7 +295,9 @@ Return only a JSON object matching this schema:
                 best_candidate = candidate
 
         status = self.classify_match(best_score)[0]
-        if status == "Not Found" or best_score < 0.60:
+        # Accept the best match if we have at least one candidate
+        # This allows cross-language matches (e.g., English title vs Japanese katakana)
+        if not best_candidate:
             return None, best_score, "Not Found"
 
         return best_candidate, best_score, status

@@ -18,7 +18,9 @@
       "Bash(pkill -f \"streamlit\")",
       "Bash(pkill -f \"python\")",
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "PowerShell(streamlit run *)"
     ]
-  }
+  },
+  "prefersReducedMotion": true
 }

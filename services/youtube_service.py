@@ -63,19 +63,61 @@ class YouTubeService:
     def clean_title(self, title):
         if not title:
             return "", ""
+
         # Strip common metadata/video tags found in brackets or parentheses
         clean_name = re.sub(
-            r'[\(\[][^\)\]]*(?:video|audio|official|music|clip|hd|definition|remastered|remaster|lyrics?|version|live|acoustic)[^\)\]]*[\)\]]', 
-            '', 
-            title, 
+            r'[\(\[][^\)\]]*(?:video|audio|official|music|clip|hd|definition|remastered|remaster|lyrics?|version|live|acoustic)[^\)\]]*[\)\]]',
+            '',
+            title,
             flags=re.IGNORECASE
         )
+        # Also remove common suffixes/prefixes that aren't part of the actual title
         clean_name = re.sub(r'\(\s*\)|\[\s*\]', '', clean_name)
         clean_name = re.sub(r'\s+', ' ', clean_name).strip()
-        
-        if " - " in clean_name:
-            parts = clean_name.split(" - ", 1)
-            return parts[1].strip(), parts[0].strip()
+
+        # Try to split on various dash types commonly used in YouTube titles
+        # Order matters: try longer/more specific separators first
+        separators = [
+            " – ",  # en dash with spaces
+            " — ",  # em dash with spaces
+            " - ",  # hyphen with spaces
+            " –",   # en dash with leading space
+            " —",   # em dash with leading space
+            "- ",   # hyphen with leading space
+            "– ",   # en dash with trailing space
+            "— ",   # em dash with trailing space
+        ]
+
+        for sep in separators:
+            if sep in clean_name:
+                parts = clean_name.split(sep, 1)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                    # Assume format: "Artist - Title" -> return (title, artist)
+                    return parts[1].strip(), parts[0].strip()
+
+        # If no separator worked, try to extract artist from common patterns
+        # Some videos have "Artist: Title" or "Title by Artist"
+        if ": " in clean_name:
+            parts = clean_name.split(": ", 1)
+            if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                # Could be "Artist: Title" or "Title: Artist" - assume former for music
+                return parts[1].strip(), parts[0].strip()
+
+        if " by " in clean_name.lower():
+            # Handle "Title by Artist" or "Artist by Title" (less common for music)
+            lower_name = clean_name.lower()
+            idx = lower_name.find(" by ")
+            if idx > 0 and idx < len(clean_name) - 3:
+                before = clean_name[:idx].strip()
+                after = clean_name[idx+4:].strip()
+                if before and after:
+                    # Heuristic: if "by" is present, often it's "Title by Artist"
+                    # But check if after looks like an artist name (shorter, fewer title-like words)
+                    # For simplicity, assume after is artist
+                    return before, after
+
+        # If we still don't have a good split, return the cleaned title as title
+        # and leave artist as unknown (search will still work with just title)
         return clean_name, "Unknown Artist"
 
     def public_get_track_details(self, video_id):

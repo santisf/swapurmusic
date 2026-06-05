@@ -85,7 +85,8 @@ class SpotifyService:
                 api_failed = False
                 for query in strategies:
                     try:
-                        results = self.sp.search(q=query, type="track", limit=5)
+                        # Spotify API allows max limit=10
+                        results = self.sp.search(q=query, type="track", limit=10)
                         items = results.get("tracks", {}).get("items", [])
                         if items:
                             tracks = items
@@ -114,6 +115,11 @@ class SpotifyService:
             return self.public_search_track(title, artist)
 
     @staticmethod
+    def _clean_url(url: str) -> str:
+        """Remove query parameters and fragments from URL before extraction."""
+        return url.split('?')[0].split('#')[0]
+
+    @staticmethod
     def extract_id(url: str) -> tuple:
         """Extract track_id and media_type from Spotify URL.
         Handles URLs like:
@@ -121,19 +127,27 @@ class SpotifyService:
         - https://open.spotify.com/intl-es/track/xxx
         - https://open.spotify.com/playlist/xxx
         - https://spotify.com/track/xxx
+        - https://open.spotify.com/playlist/xxx?si=abc
         """
-        # Match Spotify track URLs (handles open.spotify.com, subdirectories like /intl-es/, /en/, etc.)
-        track_match = re.search(r'(?:open\.)?spotify\.com/.+?/track/([a-zA-Z0-9]+)', url)
+        # Clean URL first
+        clean = SpotifyService._clean_url(url)
+        import sys
+        print(f"[SUPERPOWER DEBUG] RAW: {url!r}", file=sys.stderr)
+        print(f"[SUPERPOWER DEBUG] CLEAN: {clean!r}", file=sys.stderr)
+        url = clean
+
+        # Match Spotify track URLs (handles open.spotify.com, language subdirectories like /intl-es/, /en/, etc.)
+        track_match = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?track/([a-zA-Z0-9]+)', url)
         if track_match:
             return ("track", track_match.group(1))
 
-        # Match Spotify playlist URLs (handles open.spotify.com and subdirectories)
-        playlist_match = re.search(r'(?:open\.)?spotify\.com/.+?/playlist/([a-zA-Z0-9]+)', url)
+        # Match Spotify playlist URLs (handles open.spotify.com and language subdirectories)
+        playlist_match = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?playlist/([a-zA-Z0-9]+)', url)
         if playlist_match:
             return ("playlist", playlist_match.group(1))
 
-        # Match Spotify album URLs (handles subdirectories)
-        album_match = re.search(r'(?:open\.)?spotify\.com/.+?/album/([a-zA-Z0-9]+)', url)
+        # Match Spotify album URLs (handles language subdirectories)
+        album_match = re.search(r'(?:open\.)?spotify\.com/(?:[^/]+/)?album/([a-zA-Z0-9]+)', url)
         if album_match:
             return ("album", album_match.group(1))
 
@@ -183,3 +197,79 @@ class SpotifyService:
         except Exception as e:
             logger.error(f"Error extracting track details: {e}")
             return {}
+
+    def get_playlist_tracks(self, playlist_id: str) -> list:
+        """Get all tracks from a Spotify playlist.
+
+        NOTE: Spotify API requires user OAuth for playlist access.
+        Client Credentials flow cannot read playlist tracks.
+
+        For now, returns empty list with a clear message.
+        Future: implement OAuth flow for user login.
+        """
+        logger.warning(
+            "Spotify playlist access requires OAuth user authentication. "
+            "Client Credentials flow cannot read playlist tracks. "
+            "Please use a public playlist or login with Spotify OAuth."
+        )
+        return []
+
+    def _public_get_playlist_tracks(self, playlist_id: str) -> list:
+        """Extract tracks from public Spotify playlist webpage.
+        Uses requests + regex to parse the embedded JSON state.
+        """
+        try:
+            import re
+            import json
+
+            playlist_url = f"https://open.spotify.com/playlist/{playlist_id}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+
+            res = requests.get(playlist_url, headers=headers, timeout=15)
+            if not res.ok:
+                logger.error(f"Failed to fetch playlist page: {res.status_code}")
+                return []
+
+            html = res.text
+
+            # Try to extract the initial state from the page
+            # Spotify embeds track data in <script id="__NEXT_DATA__"> or window.__STATE__ etc.
+            match = re.search(r'<script\s+id="__NEXT_DATA__"[^>]*>(.+?)</script>', html, re.DOTALL)
+            if not match:
+                match = re.search(r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});', html, re.DOTALL)
+            if not match:
+                logger.warning("Could not find track data in playlist page")
+                return []
+
+            json_str = match.group(1)
+            data = json.loads(json_str)
+
+            # Navigate nested structure to find entities > playlists > tracks
+            tracks = []
+            try:
+                # Spotify Web Player stores data in entities.playlists[playlistId].tracks.items
+                entities = data.get("props", {}).get("pageProps", {}).get("state", {}).get("entities", {})
+                playlist_entities = entities.get("playlists", {})
+                for pl_id, pl_data in playlist_entities.items():
+                    if "tracks" in pl_data:
+                        for track_item in pl_data["tracks"].get("items", []):
+                            track = track_item.get("track") or track_item.get("item")
+                            if track and "name" in track and "artists" in track:
+                                tracks.append({
+                                    "title": track["name"],
+                                    "artist": ", ".join([a.get("name", "Unknown") for a in track.get("artists", [])]),
+                                    "url": f"https://open.spotify.com/track/{track.get('id', '')}"
+                                })
+            except Exception as e:
+                logger.warning(f"Error parsing playlist JSON structure: {e}")
+
+            logger.info(f"Public scraping found {len(tracks)} tracks in playlist")
+            return tracks
+
+        except Exception as e:
+            logger.error(f"Error in public playlist scraping: {e}", exc_info=True)
+            return []
+
+            
